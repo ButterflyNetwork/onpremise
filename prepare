@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# Create the initial schema if needed
+sentry upgrade --noinput
+
+# Run bootstrap script to add our default team, projects and superusers
+# see https://docs.getsentry.com/on-premise/server/faq/
+python bootstrap.py
+
