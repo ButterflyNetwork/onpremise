@@ -34,19 +34,29 @@
 #  BITBUCKET_CONSUMER_KEY
 #  BITBUCKET_CONSUMER_SECRET
 from sentry.conf.server import *  # NOQA
-from sentry.utils.types import Bool
 
 import os
 import os.path
-import dj_database_url
+from urlparse import urlparse
 
 CONF_ROOT = os.path.dirname(__file__)
-env = os.environ.get
 
-SENTRY_OPTIONS['system.url-prefix'] = os.environ.get('SENTRY_URL_PREFIX', '')
-DATABASES = {
-    'default': dj_database_url.config()
-}
+postgres = env('SENTRY_DATABASE_URL')
+if postgres:
+    postgres_url = urlparse(postgres)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'sentry.db.postgres',
+            'NAME': postgres_url.path[1:],
+            'USER': postgres_url.username,
+            'PASSWORD': postgres_url.password,
+            'HOST': postgres_url.hostname,
+            'PORT': postgres_url.port,
+            'OPTIONS': {
+                'autocommit': True,
+            },
+        },
+    }
 
 # You should not change this setting after your database has been created
 # unless you have altered all schemas first
@@ -61,11 +71,7 @@ SENTRY_USE_BIG_INTS = True
 
 # Instruct Sentry that this install intends to be run by a single organization
 # and thus various UI optimizations should be enabled.
-SENTRY_SINGLE_ORGANIZATION = Bool(env('SENTRY_SINGLE_ORGANIZATION', True))
-
-# Restrict registration of new users
-SENTRY_FEATURES['auth:register'] = False
-SENTRY_PUBLIC = False
+SENTRY_SINGLE_ORGANIZATION = env('SENTRY_SINGLE_ORGANIZATION', True)
 
 #########
 # Redis #
@@ -74,23 +80,21 @@ SENTRY_PUBLIC = False
 # Generic Redis configuration used as defaults for various things including:
 # Buffers, Quotas, TSDB
 
-redis = env('SENTRY_REDIS_HOST') or (env('REDIS_PORT_6379_TCP_ADDR') and 'redis')
+redis = env('SENTRY_REDIS_URL')
 if not redis:
     raise Exception('Error: REDIS_PORT_6379_TCP_ADDR (or SENTRY_REDIS_HOST) is undefined, did you forget to `--link` a redis container?')
 
-redis_password = env('SENTRY_REDIS_PASSWORD') or ''
-redis_port = env('SENTRY_REDIS_PORT') or '6379'
-redis_db = env('SENTRY_REDIS_DB') or '0'
+redis_url = urlparse(redis)
 
 SENTRY_OPTIONS.update({
     'redis.clusters': {
         'default': {
             'hosts': {
                 0: {
-                    'host': redis,
-                    'password': redis_password,
-                    'port': redis_port,
-                    'db': redis_db,
+                    'host': redis_url.hostname,
+                    'password': redis_url.password,
+                    'port': redis_url.port,
+                    'db': redis_url.path[1:] or '0',
                 },
             },
         },
@@ -148,7 +152,7 @@ if rabbitmq:
         )
     )
 else:
-    BROKER_URL = 'redis://:' + redis_password + '@' + redis + ':' + redis_port + '/' + redis_db
+    BROKER_URL = redis
 
 
 ###############
@@ -209,15 +213,6 @@ SENTRY_OPTIONS['filestore.options'] = {
     'location': env('SENTRY_FILESTORE_DIR'),
 }
 
-if env('AWS_STORAGE_BUCKET_NAME', False):
-    SENTRY_OPTIONS['filestore.backend'] = 's3'
-    SENTRY_OPTIONS['filestore.options'] = {
-        'access_key': env('AWS_ACCESS_KEY_ID'),
-        'secret_key': env('AWS_SECRET_ACCESS_KEY'),
-        'bucket_name': env('AWS_STORAGE_BUCKET_NAME'),
-        'encryption': Bool(env('AWS_S3_ENCRYPTION', True)),
-    }
-
 ##############
 # Web Server #
 ##############
@@ -225,20 +220,16 @@ if env('AWS_STORAGE_BUCKET_NAME', False):
 # If you're using a reverse SSL proxy, you should enable the X-Forwarded-Proto
 # header and set `SENTRY_USE_SSL=1`
 
-if Bool(env('SENTRY_USE_SSL', True)):
+if env('SENTRY_USE_SSL', False):
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SOCIAL_AUTH_REDIRECT_IS_HTTPS = True
-    SSLIFY_DISABLE = os.environ.get('SSLIFY_DISABLE', False)
-    MIDDLEWARE_CLASSES = (
-        'sslify.middleware.SSLifyMiddleware',
-    ) + MIDDLEWARE_CLASSES
 
 SENTRY_WEB_HOST = '0.0.0.0'
 SENTRY_WEB_PORT = 9000
 SENTRY_WEB_OPTIONS = {
-    'workers': 3,  # the number of web workers
+    # 'workers': 3,  # the number of web workers
 }
 
 ###############
@@ -253,7 +244,7 @@ if email:
     SENTRY_OPTIONS['mail.password'] = env('SENTRY_EMAIL_PASSWORD') or ''
     SENTRY_OPTIONS['mail.username'] = env('SENTRY_EMAIL_USER') or ''
     SENTRY_OPTIONS['mail.port'] = int(env('SENTRY_EMAIL_PORT') or 25)
-    SENTRY_OPTIONS['mail.use-tls'] = Bool(env('SENTRY_EMAIL_USE_TLS', False))
+    SENTRY_OPTIONS['mail.use-tls'] = env('SENTRY_EMAIL_USE_TLS', False)
 else:
     SENTRY_OPTIONS['mail.backend'] = 'dummy'
 
@@ -268,7 +259,7 @@ SENTRY_OPTIONS['mail.mailgun-api-key'] = env('SENTRY_MAILGUN_API_KEY') or ''
 if SENTRY_OPTIONS['mail.mailgun-api-key']:
     SENTRY_OPTIONS['mail.enable-replies'] = True
 else:
-    SENTRY_OPTIONS['mail.enable-replies'] = Bool(env('SENTRY_ENABLE_EMAIL_REPLIES', False))
+    SENTRY_OPTIONS['mail.enable-replies'] = env('SENTRY_ENABLE_EMAIL_REPLIES', False)
 
 if SENTRY_OPTIONS['mail.enable-replies']:
     SENTRY_OPTIONS['mail.reply-hostname'] = env('SENTRY_SMTP_HOSTNAME') or ''
@@ -289,10 +280,6 @@ if 'SENTRY_RUNNING_UWSGI' not in os.environ and len(secret_key) < 32:
     print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
 
 SENTRY_OPTIONS['system.secret-key'] = secret_key
-
-if 'GOOGLE_CLIENT_ID' in os.environ:
-    GOOGLE_CLIENT_ID = env('GOOGLE_CLIENT_ID')
-    GOOGLE_CLIENT_SECRET = env('GOOGLE_CLIENT_SECRET')
 
 if 'GITHUB_APP_ID' in os.environ:
     GITHUB_EXTENDED_PERMISSIONS = ['repo']
